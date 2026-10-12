@@ -1,0 +1,76 @@
+# Part 3: Classification
+
+## Aim
+
+The aim is to predict whether a day in Parramatta is a rain day from the other weather measurements. A **rain day** is a day with more than 1 mm of precipitation. I use four predictors: maximum temperature, minimum temperature, maximum wind speed and solar radiation. None of them is used to define a rain day. Precipitation and sunshine hours are left out, because precipitation defines the response and sunshine hours is almost the same measurement as radiation (Part 1). Five classifiers are fitted and compared: logistic regression, LDA, QDA, naive Bayes and KNN.
+
+## Creating the response and splitting the data
+
+```{r class-setup}
+# Packages for the classifiers
+library(MASS)    # lda(), qda()
+library(class)   # knn(), knn.cv()
+library(e1071)   # naiveBayes()
+
+# Binary response: "Rain" if more than 1 mm of precipitation, otherwise "Dry"
+weather$rain <- factor(ifelse(weather$precipitation_sum > 1, "Rain", "Dry"),
+                       levels = c("Dry", "Rain"))
+table(weather$rain)
+round(prop.table(table(weather$rain)), 3)
+
+# Time-based split: train on 2021-2024, hold out 2025 as the test set.
+# Weather is autocorrelated, so a random split would leak information between
+# neighbouring days. Predicting a whole later year is a more honest test.
+weather$year <- as.numeric(format(weather$date, "%Y"))
+train <- weather[weather$year <= 2024, ]
+test  <- weather[weather$year == 2025, ]
+c(train_days = nrow(train), test_days = nrow(test))
+table(train$rain)
+table(test$rain)
+
+# Model formula used by every classifier
+f <- rain ~ temperature_2m_max + temperature_2m_min +
+            wind_speed_10m_max + shortwave_radiation_sum
+```
+
+`r round(100 * mean(weather$rain == "Rain"))`% of the `r nrow(weather)` days are rain days, so the classes are imbalanced but both are well represented. A classifier that always said "Dry" would be right `r round(100 * mean(test$rain == "Dry"), 1)`% of the time on the 2025 test set. This is the baseline that any useful classifier has to beat. The data is split by time: `r nrow(train)` days (2021 to 2024) to fit the models and `r nrow(test)` days (2025) to test them.
+
+## Fitting the classifiers
+
+```{r class-fit}
+# 1. Logistic regression
+glm1 <- glm(f, data = train, family = binomial)
+summary(glm1)
+
+# 2. LDA (linear boundary, one shared covariance matrix)
+lda1 <- lda(f, data = train)
+lda1
+
+# 3. QDA (quadratic boundary, separate covariance matrix for each class)
+qda1 <- qda(f, data = train)
+
+# 4. Naive Bayes (assumes predictors are independent within each class)
+nb1 <- naiveBayes(f, data = train)
+
+# 5. KNN. Predictors are standardised (using training means and SDs) because KNN
+# uses distances. The number of neighbours k is chosen by leave-one-out
+# cross-validation on the TRAINING data only, so the test year is never used.
+preds <- c("temperature_2m_max", "temperature_2m_min",
+           "wind_speed_10m_max", "shortwave_radiation_sum")
+train_x <- scale(train[, preds])
+test_x  <- scale(test[, preds],
+                 center = attr(train_x, "scaled:center"),
+                 scale  = attr(train_x, "scaled:scale"))
+ks  <- seq(1, 61, by = 2)
+cv_acc <- sapply(ks, function(k) mean(knn.cv(train_x, train$rain, k = k) == train$rain))
+k_best <- ks[which.max(cv_acc)]
+k_best
+plot(ks, cv_acc, type = "b", xlab = "k (number of neighbours)",
+     ylab = "Leave-one-out accuracy (training data)",
+     main = "Choosing k for KNN")
+abline(v = k_best, lty = 2)
+```
+
+**Interpretation.** In the logistic regression, minimum temperature (coefficient `r round(coef(glm1)["temperature_2m_min"], 2)`), maximum temperature (`r round(coef(glm1)["temperature_2m_max"], 2)`) and radiation (`r round(coef(glm1)["shortwave_radiation_sum"], 2)`) are all highly significant (p < 0.001). Wind speed is not significant (p = `r round(summary(glm1)$coefficients["wind_speed_10m_max", 4], 2)`), so wind speed tells us almost nothing about rain once the other variables are known. The signs make physical sense. A day is more likely to be a rain day when the night is warm, the day is not so hot and there is less sunshine, which is what cloudy and humid conditions look like. In other words, rain days in Parramatta have a small gap between the daily maximum and minimum, because cloud cover cools the day and keeps the night warm. The LDA group means agree with this. Rain days average a minimum of `r round(lda1$means["Rain", "temperature_2m_min"], 1)` °C against `r round(lda1$means["Dry", "temperature_2m_min"], 1)` °C on dry days, and radiation of `r round(lda1$means["Rain", "shortwave_radiation_sum"], 1)` against `r round(lda1$means["Dry", "shortwave_radiation_sum"], 1)` MJ/m². The best number of neighbours for KNN is k = `r k_best`. Small k values follow noise in the training data, and very large k values smooth away real structure.
+
+\newpage
