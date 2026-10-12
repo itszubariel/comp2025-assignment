@@ -1,0 +1,48 @@
+# Part 1: Gathering and Exploring the Data
+
+## Location
+
+I chose Parramatta, in Greater Western Sydney (latitude -33.8150, longitude 151.0011), because it is in the part of Sydney where I live and study, so it is the weather I actually experience. It is also a good location for this project. Parramatta is inland, so it is noticeably hotter in summer than coastal Sydney, it has four clear seasons, and it has a good mix of dry and rainy days. The data covers five full years, 1 January 2021 to 31 December 2025 (`r nrow(weather)` daily observations), downloaded once from the Open-Meteo Historical Weather API using the `httr` and `jsonlite` packages and saved to a CSV file. There were no missing values, so no cleaning was needed.
+
+## Variables
+
+| Variable | Description | Unit |
+|---|---|---|
+| temperature_2m_max | Maximum air temperature during the day, measured 2 m above ground | °C |
+| temperature_2m_min | Minimum air temperature during the day, measured 2 m above ground | °C |
+| precipitation_sum | Total daily precipitation (rain, showers and snow water equivalent) | mm |
+| wind_speed_10m_max | Maximum wind speed during the day, measured 10 m above ground | km/h |
+| shortwave_radiation_sum | Total solar (shortwave) radiation reaching the ground over the day | MJ/m² |
+| sunshine_duration | Time with direct sunshine during the day; converted to hours (SunHours) for readability | seconds, then hours |
+
+Two further variables were derived from the date: day of year (1 to 366) and a categorical season (Summer = Dec to Feb, Autumn = Mar to May, Winter = Jun to Aug, Spring = Sep to Nov), following the southern hemisphere calendar.
+
+## Histogram of daily maximum temperature
+
+```{r hist-tmax}
+ggplot(weather, aes(x = temperature_2m_max)) +
+  geom_histogram(binwidth = 1, fill = "steelblue", colour = "white") +
+  labs(title = "Daily maximum temperature, Parramatta, 2021-2025",
+       x = "Maximum temperature (°C)", y = "Number of days")
+```
+
+The daily maximum temperature has a mean of `r round(mean(weather$temperature_2m_max), 1)` °C and a median of `r round(median(weather$temperature_2m_max), 1)` °C, with values from `r min(weather$temperature_2m_max)` °C to `r max(weather$temperature_2m_max)` °C. The distribution is centred around 18 to 25 °C and is not perfectly bell-shaped. It is flat-topped, with small peaks near 18 °C and 23 °C, which is what we would expect from a mixture of cooler (autumn and winter) and warmer (spring and summer) days. It is also right-skewed (sample skewness `r round(skew(weather$temperature_2m_max), 2)`). There is a sharp lower cut-off near 14 °C, so Parramatta rarely has cold days, and a long upper tail of hot days. There were `r n_hot` days of 35 °C or more, which are most likely summer heatwave days and are typical of inland Western Sydney.
+
+## Scatterplot matrix
+
+```{r pairs, fig.height=8, fig.width=8}
+ggpairs(num_vars, lower = list(continuous = wrap("points", alpha = 0.2, size = 0.5)))
+```
+
+## Commentary
+
+**Relationships.** TempMax is strongly positively related to TempMin (r = `r round(r["TempMax","TempMin"], 2)`) and to Radiation (r = `r round(r["TempMax","Radiation"], 2)`). Warm days tend to be followed by warm nights, and days with more incoming solar energy are hotter. TempMax is only moderately related to SunHours (r = `r round(r["TempMax","SunHours"], 2)`) and very weakly related to WindMax (r = `r round(r["TempMax","WindMax"], 2)`) and Precip (r = `r round(r["TempMax","Precip"], 2)`). Radiation and SunHours are strongly correlated with each other (r = `r round(r["Radiation","SunHours"], 2)`) because both measure how sunny the day was. Including both in a regression would cause multicollinearity, which inflates standard errors and makes individual coefficients hard to interpret. Precip is negatively correlated with SunHours (r = `r round(r["Precip","SunHours"], 2)`) and Radiation (r = `r round(r["Precip","Radiation"], 2)`), as expected, because cloudy, wet days receive less sun. TempMin and SunHours are essentially uncorrelated (r = `r round(r["TempMin","SunHours"], 3)`), which suggests overnight minimums do not depend on how sunny the previous day was. With `r nrow(weather)` observations even small correlations are statistically significant, so I focus on the size of r rather than the p-values.
+
+**Seasonality.** TempMin, TempMax and Radiation all follow the seasons, which is why they move together. The multimodal shapes of TempMin and Radiation (flat or lumpy densities) reflect the summer and winter halves of the year. This means a straight-line relationship between day of year and temperature would fit poorly, which motivates the non-linear models in Part 7.
+
+**Skew and unusual observations.** Precip is extremely right-skewed. `r round(pct_dry)`% of days recorded exactly 0 mm, the median is `r median(weather$precipitation_sum)` mm, the mean is `r round(mean(weather$precipitation_sum), 2)` mm, and the maximum is `r max(weather$precipitation_sum)` mm in a single day. WindMax is mildly right-skewed. SunHours has a hard ceiling at 14 hours, which is the physical limit of daylight, a pile-up of days near 0 hours (heavily overcast days) and an unexplained horizontal band of days at exactly 10 hours. I do not know the cause of the 10-hour band, but it may be an artefact of how the sunshine duration is derived rather than real weather. The hottest days (up to `r max(weather$temperature_2m_max)` °C) and the very wet days are genuine extreme events and I keep them in the data.
+
+**Implications for modelling.** (1) For Part 2, TempMin, Radiation and season are promising predictors of TempMax, but I will use only one of Radiation and SunHours to avoid multicollinearity. (2) Precip is too skewed to be a sensible response in linear regression, so in Part 3 I convert it to a binary rain-day indicator. (3) Because the sunshine and rain variables are linked, the rain-day classifiers should not use predictors used to define the indicator. (4) Seasonality means non-linear terms in day of year are needed (Part 7).
+
+**Limitations.** Only five years of data are used, so rare extremes (such as a severe heatwave) are under-represented. The values are from a gridded reanalysis-based model rather than a single weather station, so they may differ from official Parramatta station readings. Consecutive days are also not independent (weather is autocorrelated), which means the usual statistical assumptions are only approximately true. A further step would be to compare this with an official Bureau of Meteorology station record.
+\newpage
