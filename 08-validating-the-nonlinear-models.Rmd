@@ -1,0 +1,141 @@
+# Part 8: Validating the Non-linear Models
+
+## Aim
+
+The aim is to choose the flexibility of each model (polynomial degree, spline degrees of freedom, smoothing spline degrees of freedom, GAM basis size) using cross-validation, to plot the chosen curves together, and to recommend one model for describing Parramatta's seasonal temperature pattern. I also add a fifth model that I think suits this problem: a GAM with a **cyclic** cubic spline, which forces the curve to join up smoothly between 31 December and 1 January.
+
+## Choosing flexibility by cross-validation
+
+I use random 10-fold cross-validation (the same method as Part 5) to compare the models over a range of flexibilities, and leave-one-year-out cross-validation as a stricter check, because neighbouring days are similar and random folds are slightly optimistic. The rule for choosing is: take the **least flexible** setting whose 10-fold CV error is within 0.01 °C of the best. That is a small tolerance (about 0.3% of the error), and it prefers simpler models when the differences are too small to matter.
+
+```{r nl-cv}
+set.seed(2026)
+folds10 <- sample(rep(1:10, length.out = n))   # random folds
+folds_year <- weather$year                      # one fold per year
+
+# Cross-validated RMSE for a model-fitting function fp(train, test) -> predictions
+cv_rmse <- function(fp, folds) {
+  p <- numeric(n)
+  for (k in sort(unique(folds))) {
+    p[folds == k] <- fp(weather[folds != k, ], weather[folds == k, ])
+  }
+  sqrt(mean((y - p)^2))
+}
+
+# Model families: each returns a function of (train, test)
+poly_fp <- function(d) function(tr, te)
+  predict(lm(temperature_2m_max ~ poly(doy, d), data = tr), te)
+ns_fp <- function(d) function(tr, te)
+  predict(lm(temperature_2m_max ~ ns(doy, df = d), data = tr), te)
+ss_fp <- function(d) function(tr, te)
+  predict(smooth.spline(tr$doy, tr$temperature_2m_max, df = d), te$doy)$y
+gam_fp <- function(k) function(tr, te)
+  predict(gam(temperature_2m_max ~ s(doy, k = k, fx = TRUE), data = tr), te)
+cc_fp <- function(k) function(tr, te)
+  predict(gam(temperature_2m_max ~ s(doy, k = k, bs = "cc"), data = tr,
+              knots = list(doy = c(0.5, 366.5))), te)
+
+# Grid of flexibilities for each family
+grids <- list(Polynomial = 1:10, NaturalSpline = 2:14,
+              SmoothingSpline = c(3, 4, 5, 6, 8, 10, 12, 15, 20),
+              GAM_fixed = c(4, 5, 6, 7, 8, 10, 12), GAM_cyclic = c(4, 5, 6, 7, 8, 10))
+fps <- list(Polynomial = poly_fp, NaturalSpline = ns_fp, SmoothingSpline = ss_fp,
+            GAM_fixed = gam_fp, GAM_cyclic = cc_fp)
+
+cv_tab <- lapply(names(grids), function(m) {
+  data.frame(model = m, par = grids[[m]],
+             cv10 = sapply(grids[[m]], function(g) cv_rmse(fps[[m]](g), folds10)),
+             loyo = sapply(grids[[m]], function(g) cv_rmse(fps[[m]](g), folds_year)))
+})
+names(cv_tab) <- names(grids)
+
+# Selection rule: least flexible setting within 0.01 C of the best 10-fold CV error
+chosen <- sapply(cv_tab, function(d) min(d$par[d$cv10 <= min(d$cv10) + 0.01]))
+chosen
+```
+
+```{r nl-cv-plot, fig.height=6, fig.width=8}
+# CV error against flexibility; solid = 10-fold, dashed = leave-one-year-out,
+# vertical line = chosen setting
+par(mfrow = c(2, 3), mar = c(4, 4, 3, 1))
+xlabs <- c(Polynomial = "Degree", NaturalSpline = "Degrees of freedom",
+           SmoothingSpline = "Degrees of freedom", GAM_fixed = "k (basis size)",
+           GAM_cyclic = "k (basis size)")
+for (m in names(cv_tab)) {
+  d <- cv_tab[[m]]
+  plot(d$par, d$cv10, type = "b", ylim = range(3.65, 4.3, d$cv10, d$loyo),
+       xlab = xlabs[m], ylab = "CV RMSE (°C)", main = m)
+  lines(d$par, d$loyo, type = "b", lty = 2, col = "red")
+  abline(v = chosen[m], col = "blue", lty = 3)
+}
+par(mfrow = c(1, 1))
+```
+
+```{r nl-cv-table}
+# Chosen models: final fits on all data, with CV errors at the chosen setting
+poly_f <- lm(temperature_2m_max ~ poly(doy, chosen["Polynomial"]), data = weather)
+ns_f   <- lm(temperature_2m_max ~ ns(doy, df = chosen["NaturalSpline"]), data = weather)
+ss_f   <- smooth.spline(x, y, df = chosen["SmoothingSpline"])
+gam_f  <- gam(temperature_2m_max ~ s(doy, k = chosen["GAM_fixed"], fx = TRUE), data = weather)
+cc_f   <- gam(temperature_2m_max ~ s(doy, k = chosen["GAM_cyclic"], bs = "cc"),
+              data = weather, knots = list(doy = c(0.5, 366.5)))
+
+final_fits <- list(Polynomial = fitted(poly_f), NaturalSpline = fitted(ns_f),
+                   SmoothingSpline = predict(ss_f, x)$y, GAM_fixed = fitted(gam_f),
+                   GAM_cyclic = fitted(cc_f))
+pick <- function(m, col) cv_tab[[m]][cv_tab[[m]]$par == chosen[m], col]
+summary_tab <- data.frame(
+  Model = names(chosen),
+  Chosen = chosen,
+  CV10_RMSE  = sapply(names(chosen), pick, col = "cv10"),
+  LOYO_RMSE  = sapply(names(chosen), pick, col = "loyo"),
+  Train_R2   = sapply(final_fits, function(f) 1 - sum((y - f)^2) / tss),
+  row.names = NULL)
+knitr::kable(summary_tab, digits = 3, caption = "Chosen flexibility and cross-validated error for each model")
+```
+
+## Comparing the fitted curves
+
+```{r nl-final-plot, fig.height=5.5, fig.width=8}
+# All chosen curves on one plot, over the data
+final_curves <- list(
+  Polynomial      = predict(poly_f, data.frame(doy = xs)),
+  NaturalSpline   = predict(ns_f, data.frame(doy = xs)),
+  SmoothingSpline = predict(ss_f, xs)$y,
+  GAM_fixed       = predict(gam_f, data.frame(doy = xs)),
+  GAM_cyclic      = predict(cc_f, data.frame(doy = xs)))
+cols <- c("red", "blue", "darkgreen", "orange", "purple")
+plot(x, y, pch = 16, cex = 0.4, col = adjustcolor("grey40", 0.35), ylim = c(5, 43),
+     xlab = "Day of year", ylab = "Daily maximum temperature (°C)",
+     main = "Seasonal pattern of daily maximum temperature, Parramatta")
+for (i in seq_along(final_curves)) lines(xs, final_curves[[i]], col = cols[i], lwd = 2.5, lty = i)
+legend("bottom", legend = paste0(names(chosen), " (", chosen, ")"),
+       col = cols, lty = 1:5, lwd = 2.5, cex = 0.8, ncol = 2, bg = "white")
+
+# Fitted value at 1 January and 31 December (leap-year day 366): should be about equal
+edges <- sapply(final_curves, function(cv) cv[c(1, 366)])
+rownames(edges) <- c("1 Jan", "31 Dec")
+round(t(edges), 2)
+
+# Where the cyclic curve peaks and bottoms out
+c(hottest_day = which.max(final_curves$GAM_cyclic), coolest_day = which.min(final_curves$GAM_cyclic))
+```
+
+```{r nl-text-numbers, include=FALSE}
+cc_curve <- final_curves$GAM_cyclic
+peak_doy <- which.max(cc_curve); trough_doy <- which.min(cc_curve)
+edge_gap <- abs(edges[1, ] - edges[2, ])
+ss_auto_df <- smooth.spline(x, y)$df
+```
+
+**Interpretation.** The CV curves show the same pattern for all five families. The error falls steeply while the models are too rigid (for example polynomial degree 1 to 3, or only 2 to 3 degrees of freedom), then flattens out around `r round(min(summary_tab$CV10_RMSE), 2)` °C. After that, more flexibility gives no real improvement, and for the splines and GAMs the leave-one-year-out error actually gets a little worse as flexibility increases, which is a sign of the fits starting to follow noise. The chosen settings are polynomial degree `r chosen["Polynomial"]`, natural spline with `r chosen["NaturalSpline"]` degrees of freedom, smoothing spline with `r chosen["SmoothingSpline"]`, GAM with k = `r chosen["GAM_fixed"]` and cyclic GAM with k = `r chosen["GAM_cyclic"]`. As a cross-check, the default automatic choice of `smooth.spline()` gives about `r round(ss_auto_df, 0)` degrees of freedom, which is in the flat part of the curve and so agrees with my grid. The differences in CV error between the five chosen models are tiny (10-fold errors from `r round(min(summary_tab$CV10_RMSE), 3)` to `r round(max(summary_tab$CV10_RMSE), 3)` °C), so by prediction accuracy alone they are effectively tied. The polynomial needed degree `r chosen["Polynomial"]` to get there, which is a lot of coefficients for such a simple seasonal shape, while the splines needed only `r chosen["NaturalSpline"]` to `r chosen["SmoothingSpline"]` degrees of freedom.
+
+The five curves in the plot lie almost on top of each other through the middle of the year, with the hottest part of the year around day `r peak_doy` (`r sub("^0", "", format(as.Date("2025-01-01") + peak_doy - 1, "%d %B"))`) and the coolest around day `r trough_doy` (`r sub("^0", "", format(as.Date("2025-01-01") + trough_doy - 1, "%d %B"))`) in the cyclic fit. They differ at the two ends of the year. Temperature on 31 December should be about the same as on 1 January, because the two days are next to each other in the calendar. The cyclic spline guarantees this (its two ends differ by `r round(edge_gap["GAM_cyclic"], 2)` °C), but the natural spline does not (a gap of `r round(edge_gap["NaturalSpline"], 2)` °C), and the other non-cyclic models have gaps of `r round(edge_gap["Polynomial"], 2)` °C (polynomial), `r round(edge_gap["SmoothingSpline"], 2)` °C (smoothing spline) and `r round(edge_gap["GAM_fixed"], 2)` °C (fixed GAM) at the edges, where a model has less data to rely on. These gaps are about 1 °C, which is small next to the day-to-day noise of about 3.7 °C, so the practical effect is modest, but it is a real difference in how sensible the curves are.
+
+## Recommendation for Parramatta
+
+I recommend the **cyclic GAM with k = `r chosen["GAM_cyclic"]`**. Its cross-validated error is essentially as good as that of any other model (10-fold `r round(summary_tab$CV10_RMSE[5], 3)` °C, which is within `r round(summary_tab$CV10_RMSE[5] - min(summary_tab$CV10_RMSE), 3)` °C of the best, and leave-one-year-out `r round(summary_tab$LOYO_RMSE[5], 3)` °C, the lowest of the five on the stricter check), and it has only `r chosen["GAM_cyclic"] - 1` degrees of freedom, so it is the simplest. It is also the only one that is guaranteed to give the same temperature at the end and the start of the year, which matches how a calendar works, and a GAM can be extended to more predictors. If a simpler tool is needed, the natural spline with `r chosen["NaturalSpline"]` degrees of freedom is a good alternative, but with a small mismatch at the year boundary. I would not use the high-degree polynomial.
+
+For Parramatta, the seasonal curve shows a hot summer and a mild winter with a smooth transition between them. Even the best seasonal curve leaves a residual RMSE of about `r round(sqrt(mean((y - final_fits$GAM_cyclic)^2)), 1)` °C, much larger than the 2.5 °C of the Part 2 regression, which used same-day TempMin and Radiation. So the time of year tells us what is typical for a date, but a good prediction of an individual day also needs that day's actual conditions.
+
+**Limitations and further analysis.** (1) Only five years of data are used, so the curve is a five-year average and the year-to-year differences (such as hot summers) are not captured. (2) The residuals are autocorrelated (about 0.5), so the CV errors are slightly optimistic and standard errors for the curves would be too small. (3) The grid of flexibilities and the 0.01 °C tolerance in the selection rule are my own choices, and a different rule would pick slightly different settings, though the CV errors show it would not matter much. (4) The seasonal models use day of year only. Adding a year trend or the Part 2 predictors in a GAM, or fitting an additive model with an autoregressive error, would be a natural next step. (5) A longer record would show whether the seasonal shape is stable or shifting with climate.
