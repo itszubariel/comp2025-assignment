@@ -1,0 +1,84 @@
+# Part 5: Resampling Methods and Error Estimation
+
+## Aim
+
+The 2025 test set in Part 4 is only 365 days, so its error is a noisy estimate of how the models would do on new data. The aim here is to get more reliable test-error estimates with cross-validation for two models: the **final regression model from Part 2** (Model 2, predicting daily maximum temperature) and the **logistic regression from Part 3** (predicting rain days). Here the models are refitted on all `r nrow(weather)` days and tested on the days held out in each fold.
+
+## Choice of resampling method
+
+I use **10-fold cross-validation**. The days are randomly split into 10 groups. Each group in turn is held out, the model is fitted to the other nine, and the held-out group is predicted. Every day is predicted exactly once, by a model that never saw it. I chose 10 folds because it is a good compromise between bias and variance. Each model is trained on 90% of the data, so its error is close to the error of a model trained on everything (leave-one-out does slightly better here, but is more expensive and its estimates are highly correlated with each other). The simple validation set approach is what Part 4 did, and it is the noisy method I am trying to improve on. Repeating the 10-fold split with different random seeds shows how stable the result is.
+
+Weather on neighbouring days is similar (the residuals in Part 2 had a lag-1 autocorrelation of 0.27), so random folds put near-copies of each test day in the training set, which makes the error look a little too good. As a stricter check I also use **leave-one-year-out cross-validation**: each of the five years is predicted by a model fitted to the other four years.
+
+```{r cv-setup}
+# Error estimates by cross-validation for:
+#   (a) the final regression model (m2): root mean squared error (RMSE) in degrees C
+#   (b) the logistic regression for rain days (formula f): misclassification rate
+set.seed(2026)                         # makes the random folds reproducible
+n <- nrow(weather)
+
+# Predictions for every day, each made by a model that did not see that day
+cv_reg <- function(folds) {
+  p <- numeric(n)
+  for (k in sort(unique(folds))) {
+    fit <- lm(formula(m2), data = weather[folds != k, ])
+    p[folds == k] <- predict(fit, weather[folds == k, ])
+  }
+  p
+}
+cv_cls <- function(folds) {
+  p <- character(n)
+  for (k in sort(unique(folds))) {
+    fit <- glm(f, data = weather[folds != k, ], family = binomial)
+    p[folds == k] <- ifelse(predict(fit, weather[folds == k, ], type = "response") > 0.5,
+                            "Rain", "Dry")
+  }
+  p
+}
+rmse <- function(p) sqrt(mean((weather$temperature_2m_max - p)^2))
+miscl <- function(p) mean(p != weather$rain)
+
+folds10 <- sample(rep(1:10, length.out = n))   # random 10 folds
+folds_year <- weather$year                      # one fold per year
+```
+
+```{r cv-run}
+# Training errors: model fitted and tested on the same data
+glm_all <- glm(f, data = weather, family = binomial)
+train_rmse <- sqrt(mean(resid(m2)^2))
+train_err  <- mean(ifelse(fitted(glm_all) > 0.5, "Rain", "Dry") != weather$rain)
+
+# Cross-validated errors
+cv10_rmse <- rmse(cv_reg(folds10));  cv10_err <- miscl(cv_cls(folds10))
+loyo_rmse <- rmse(cv_reg(folds_year)); loyo_err <- miscl(cv_cls(folds_year))
+
+# Repeat 10-fold CV 20 times with different random splits to see how stable it is
+rep_rmse <- sapply(1:20, function(i) rmse(cv_reg(sample(rep(1:10, length.out = n)))))
+rep_err  <- sapply(1:20, function(i) miscl(cv_cls(sample(rep(1:10, length.out = n)))))
+
+results <- data.frame(
+  Estimate = c("Training error", "10-fold CV", "Leave-one-year-out CV"),
+  Regression_RMSE_C = c(train_rmse, cv10_rmse, loyo_rmse),
+  Logistic_error_rate = c(train_err, cv10_err, loyo_err))
+knitr::kable(results, digits = 3, caption = "Training and cross-validated error for the final models")
+c(regression_rmse_sd_over_20_repeats = sd(rep_rmse), logistic_error_sd_over_20_repeats = sd(rep_err))
+
+# Leave-one-year-out RMSE for each year separately
+p_year <- cv_reg(folds_year)
+sapply(sort(unique(weather$year)), function(y) {
+  i <- weather$year == y
+  sqrt(mean((weather$temperature_2m_max[i] - p_year[i])^2))
+})
+```
+
+```{r cv-peryear-text, include=FALSE}
+yr_rmse <- sapply(sort(unique(weather$year)), function(y) {
+  i <- weather$year == y
+  sqrt(mean((weather$temperature_2m_max[i] - p_year[i])^2))
+})
+names(yr_rmse) <- sort(unique(weather$year))
+```
+
+**Interpretation.** For the regression model, the 10-fold CV estimate of test error is an RMSE of `r round(cv10_rmse, 2)` °C, which is almost identical to the training RMSE of `r round(train_rmse, 2)` °C. For the rain-day logistic regression, the 10-fold CV misclassification rate is `r round(100 * cv10_err, 1)`% against a training error of `r round(100 * train_err, 1)`%, which is again nearly the same (so the CV accuracy is about `r round(100 * (1 - cv10_err), 1)`%). Repeating the 10-fold split 20 times changes the regression RMSE by only about `r round(sd(rep_rmse), 3)` °C and the error rate by about `r round(100 * sd(rep_err), 2)` percentage points, so the choice of random split does not matter. The stricter leave-one-year-out estimates are a little worse (`r round(loyo_rmse, 2)` °C and `r round(100 * loyo_err, 1)`%). That is the expected direction, because random folds are a bit optimistic when neighbouring days are alike. It also varies by year. The regression RMSE ranges from `r round(min(yr_rmse), 2)` °C (`r names(yr_rmse)[which.min(yr_rmse)]`) to `r round(max(yr_rmse), 2)` °C (`r names(yr_rmse)[which.max(yr_rmse)]`). The held-out year 2025 in Parts 3 and 4 gave a logistic error of 20.8%, higher than the CV estimate of `r round(100 * cv10_err, 1)`%, probably because 2025 happened to be a harder year to predict (its regression error was also the highest of the five years). This shows why one test set can mislead, and why the cross-validated figures are the ones I would quote.
+
+\newpage
