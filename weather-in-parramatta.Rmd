@@ -1,0 +1,84 @@
+---
+title: "COMP2025 Assignment: Weather in Parramatta"
+output:
+  pdf_document:
+    number_sections: false
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+library(ggplot2)
+library(GGally)
+
+weather <- read.csv("parramatta_weather.csv")
+
+weather$date   <- as.Date(weather$time)
+weather$doy    <- as.numeric(format(weather$date, "%j"))
+weather$month  <- as.numeric(format(weather$date, "%m"))
+weather$season <- factor(
+  ifelse(weather$month %in% c(12, 1, 2), "Summer",
+  ifelse(weather$month %in% 3:5,         "Autumn",
+  ifelse(weather$month %in% 6:8,         "Winter", "Spring"))),
+  levels = c("Summer", "Autumn", "Winter", "Spring"))
+weather$sunshine_hours <- weather$sunshine_duration / 3600
+
+num_vars <- weather[, c("temperature_2m_max", "temperature_2m_min",
+                        "precipitation_sum", "wind_speed_10m_max",
+                        "shortwave_radiation_sum", "sunshine_hours")]
+names(num_vars) <- c("TempMax", "TempMin", "Precip", "WindMax", "Radiation", "SunHours")
+
+skew <- function(x) mean((x - mean(x))^3) / sd(x)^3
+r <- cor(num_vars)
+n_hot   <- sum(weather$temperature_2m_max >= 35)
+pct_dry <- 100 * mean(weather$precipitation_sum == 0)
+```
+
+\begin{center}
+\vspace*{2cm}
+{\Huge COMP2025 Introduction to Data Science}\\[0.6cm]
+{\LARGE Assignment, Spring 2026}\\[0.4cm]
+{\Large Weather in Parramatta, NSW}\\[1.5cm]
+{\Large \textbf{Name:} FULL NAME}\\[0.3cm]
+{\Large \textbf{Student number:} STUDENT NUMBER}
+\end{center}
+
+\vspace{1cm}
+
+**Declaration**
+
+By including this statement, we the authors of this work, verify that:
+
+- I hold a copy of this assignment that we can produce if the original is lost or damaged.
+- I hereby certify that no part of this assignment/product has been copied from any other student's work or from any other source (including generative sources) except where due acknowledgement is made in the assignment.
+- No part of this assignment/product has been written/produced for us by another person except where such collaboration has been authorised by the subject lecturer/tutor concerned.
+- I am aware that this work may be reproduced and submitted to plagiarism detection software programs for the purpose of detecting possible plagiarism (which may retain a copy on its database for future plagiarism checking).
+- I hereby certify that we have read and understand what the School of Computer, Data and Mathematical Science defines as minor and substantial breaches of misconduct as outlined in the Subject Outline for this unit.
+
+**Acknowledgement:** In preparing this assignment I drew on general resources available online, including R documentation and package vignettes, statistics tutorials, and discussion forums such as Stack Overflow, for guidance on methods and to help debug my code. Generative AI tools were also used as a study and coding aid to help plan the analysis and explain statistical methods. All code was written and run by me, and all results come from my own downloaded data.
+
+\newpage
+
+```{r sec01, child="01-gathering-and-exploring-the-data.Rmd"}
+```
+
+```{r sec02, child="02-regression.Rmd"}
+```
+
+```{r sec03, child="03-classification.Rmd"}
+```
+
+```{r sec04, child="04-classification-validation.Rmd"}
+```
+
+```{r sec05, child="05-resampling-and-error-estimation.Rmd"}
+```
+
+```{r sec06, child="06-coefficient-standard-error.Rmd"}
+```
+
+```{r sec07, child="07-moving-beyond-linearity.Rmd"}
+```
+
+```{r sec08, child="08-validating-the-nonlinear-models.Rmd"}
+```
+
