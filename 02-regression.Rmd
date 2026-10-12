@@ -1,0 +1,122 @@
+# Part 2: Regression
+
+## Aim
+
+The aim of this part is to predict the daily maximum temperature in Parramatta (`temperature_2m_max`) from other weather variables, and to work out which of those variables matter once the others are accounted for. The predictors are minimum temperature, solar radiation, maximum wind speed and season. I leave out sunshine hours because it is strongly correlated with solar radiation (r = 0.8 in Part 1), and I leave out precipitation because it is extremely skewed.
+
+## Initial multiple linear regression model
+
+```{r reg-fit}
+# Model 1: TempMax predicted from TempMin, Radiation, WindMax and season
+# (season is a factor, so R uses Summer as the baseline level)
+m1 <- lm(temperature_2m_max ~ temperature_2m_min + shortwave_radiation_sum +
+           wind_speed_10m_max + season, data = weather)
+
+# Coefficients, standard errors, t-tests, R-squared
+summary(m1)
+
+# 95% confidence intervals for the coefficients
+confint(m1)
+```
+
+```{r reg-vif}
+# Variance inflation factors (VIF) for the numeric predictors.
+# VIF = 1 / (1 - R^2) from regressing each predictor on the other predictors.
+# Values above about 5 would indicate a multicollinearity problem.
+xs <- weather[, c("temperature_2m_min", "shortwave_radiation_sum", "wind_speed_10m_max")]
+sapply(names(xs), function(v) {
+  r2 <- summary(lm(reformulate(setdiff(names(xs), v), v), data = xs))$r.squared
+  1 / (1 - r2)
+})
+```
+
+**Interpretation.** Holding the other predictors fixed, each extra 1 °C of minimum temperature is associated with a `r round(coef(m1)["temperature_2m_min"], 2)` °C higher maximum temperature, and each extra 1 MJ/m² of solar radiation with a `r round(coef(m1)["shortwave_radiation_sum"], 2)` °C higher maximum. Each extra 1 km/h of maximum wind speed is associated with a `r round(abs(coef(m1)["wind_speed_10m_max"]), 2)` °C lower maximum, which is plausible because windy days tend to mix in cooler air. All three numeric predictors are highly statistically significant (p < 0.001). The season coefficients are differences from Summer for a day with the same minimum temperature, radiation and wind. They are positive (Autumn `r round(coef(m1)["seasonAutumn"], 2)`, Winter `r round(coef(m1)["seasonWinter"], 2)`, Spring `r round(coef(m1)["seasonSpring"], 2)` °C) and all are significant. This does not mean autumn is hotter than summer. TempMin and Radiation already carry most of the seasonal signal, so the season terms only describe what is left over once they are accounted for. The VIFs are all below `r ceiling(max(sapply(names(xs), function(v) 1 / (1 - summary(lm(reformulate(setdiff(names(xs), v), v), data = xs))$r.squared))) * 10) / 10`, so multicollinearity is not a problem, which confirms that leaving out SunHours was a good choice. Model 1 has an R-squared of `r round(summary(m1)$r.squared, 3)` and a residual standard error of `r round(sigma(m1), 2)` °C.
+
+## Diagnostic plots
+
+```{r reg-diag, fig.height=7, fig.width=7}
+# Residuals vs fitted, normal Q-Q, scale-location and residuals vs leverage plots for Model 1
+par(mfrow = c(2, 2))
+plot(m1)
+par(mfrow = c(1, 1))
+```
+
+```{r reg-diag-numbers}
+# Numbers to support the diagnostic plots
+res1 <- resid(m1)
+
+# Skewness and kurtosis of residuals (normal distribution: skewness 0, kurtosis 3)
+res_skew <- mean((res1 - mean(res1))^3) / sd(res1)^3
+res_kurt <- mean((res1 - mean(res1))^4) / sd(res1)^4
+c(skewness = res_skew, kurtosis = res_kurt)
+
+# Residual spread (standard deviation) in each season
+tapply(res1, weather$season, sd)
+
+# Correlation between each day's residual and the previous day's residual
+cor(res1[-1], res1[-length(res1)])
+
+# Number of days with standardised residuals bigger than 3 in size
+sum(abs(rstandard(m1)) > 3)
+```
+
+**Interpretation.** The residuals vs fitted plot shows no strong curve, so a linear relationship is a reasonable first approximation for these predictors. The assumptions are not perfectly met though.
+
+1. **Non-normal residuals.** The Q-Q plot bends upwards at the right end. The residuals are right-skewed (skewness `r round(res_skew, 2)`) and heavy-tailed (kurtosis `r round(res_kurt, 2)`), and the largest standardised residual is `r round(max(abs(rstandard(m1))), 1)`. These come from hot days that the model under-predicts.
+2. **Non-constant variance.** The scale-location plot rises to the right, and the residual standard deviation is `r round(sd(res1[weather$season == "Summer"]), 1)` °C in Summer and `r round(sd(res1[weather$season == "Spring"]), 1)` °C in Spring, but only `r round(sd(res1[weather$season == "Autumn"]), 1)` °C in Autumn and `r round(sd(res1[weather$season == "Winter"]), 1)` °C in Winter. Hot-season temperatures are harder to predict because they include sudden heat spikes.
+3. **Non-independent errors.** The correlation between consecutive days' residuals is `r round(cor(res1[-1], res1[-length(res1)]), 2)`, so errors are positively autocorrelated, which breaks the independence assumption. The reported standard errors are therefore probably a little too small and the p-values a little too optimistic.
+4. **Outliers and leverage.** `r sum(abs(rstandard(m1)) > 3)` days have standardised residuals above 3 in size, but no point has high leverage and Cook's distance contours do not appear in the leverage plot, so no single day is driving the fit.
+
+## Interaction and transformation
+
+```{r reg-improve}
+# Model 2: add an interaction between TempMin and Radiation
+m2 <- update(m1, . ~ . + temperature_2m_min:shortwave_radiation_sum)
+
+# Model 3: log transform of Radiation
+m3 <- update(m1, . ~ . - shortwave_radiation_sum + log(shortwave_radiation_sum))
+
+# Model 4: Radiation effect allowed to differ by season
+m4 <- update(m1, . ~ . + shortwave_radiation_sum:season)
+
+# Compare the four models
+models <- list(M1_base = m1, M2_TempMin_x_Rad = m2, M3_logRad = m3, M4_Rad_x_season = m4)
+data.frame(
+  model       = names(models),
+  adj_R2      = sapply(models, function(m) summary(m)$adj.r.squared),
+  AIC         = sapply(models, AIC),
+  residual_se = sapply(models, sigma),
+  row.names   = NULL
+)
+
+# F-tests for the nested models (M1 vs M2, and M1 vs M4)
+anova(m1, m2)
+anova(m1, m4)
+```
+
+**Choosing the final model.** The log transform of Radiation (Model 3) makes the fit clearly worse (AIC `r round(AIC(m3), 1)` against `r round(AIC(m1), 1)` for Model 1), so I reject it. Letting the radiation effect differ by season (Model 4) does not help either. The F-test gives p = `r round(anova(m1, m4)[2, "Pr(>F)"], 2)` and its AIC is slightly higher than Model 1. The TempMin x Radiation interaction (Model 2) is the only change that helps. The F-test is significant (p = `r signif(anova(m1, m2)[2, "Pr(>F)"], 2)`), AIC falls from `r round(AIC(m1), 1)` to `r round(AIC(m2), 1)`, and adjusted R-squared rises from `r round(summary(m1)$adj.r.squared, 4)` to `r round(summary(m2)$adj.r.squared, 4)`. **I choose Model 2 as my final model.** The improvement is real but small, so the interaction is a refinement and not a big change in how well we predict.
+
+```{r reg-final}
+# Final model summary
+summary(m2)
+```
+
+The interaction coefficient is positive (`r round(coef(m2)["temperature_2m_min:shortwave_radiation_sum"], 4)`), so the effect of solar radiation on the maximum temperature is larger when the night before was warmer. At the average minimum temperature of `r round(mean(weather$temperature_2m_min), 1)` °C, one extra MJ/m² of radiation is associated with about `r round(coef(m2)["shortwave_radiation_sum"] + coef(m2)["temperature_2m_min:shortwave_radiation_sum"] * mean(weather$temperature_2m_min), 2)` °C higher maximum temperature. All terms in the final model remain significant at the 0.1% level. A re-check of the diagnostics (below) shows the same patterns as Model 1.
+
+```{r reg-final-diag, fig.height=7, fig.width=7}
+# Diagnostic plots for the final model (Model 2)
+par(mfrow = c(2, 2))
+plot(m2)
+par(mfrow = c(1, 1))
+
+# Average residual on hot days (35 C or more): positive means the model under-predicts
+mean(resid(m2)[weather$temperature_2m_max >= 35])
+```
+
+## R-squared and conclusion for Parramatta
+
+The final model has an R-squared of `r round(summary(m2)$r.squared, 3)` (adjusted `r round(summary(m2)$adj.r.squared, 3)`). This means the model explains about `r round(100 * summary(m2)$r.squared)`% of the day-to-day variation in Parramatta's maximum temperature over 2021 to 2025. The residual standard error is `r round(sigma(m2), 2)` °C, so a typical prediction is about 2.5 °C away from the actual value, and roughly 95% of predictions fall within about ±5 °C. Warm nights and sunny days go with hot days in Parramatta, and wind pulls the maximum down slightly. The model is much worse on the hottest days: on days of 35 °C or more it under-predicts by `r round(mean(resid(m2)[weather$temperature_2m_max >= 35]), 1)` °C on average, so it would understate Parramatta's heatwave peaks.
+
+**Limitations and further analysis.** (1) R-squared is calculated on the same data used to fit the model, so it is optimistic. Parts 5 and 6 give a more honest error estimate. (2) The residuals are skewed, have unequal variance and are autocorrelated, so the p-values should be read as approximate. Robust standard errors, or a model that includes the previous day's temperature, would deal with this. (3) TempMin and Radiation are measured on the same day as the response, so this model describes the weather rather than forecasting it. (4) The heat spikes suggest that predictors such as wind direction, which are not in this dataset, would help. (5) The model is linear in day-to-day variables, and Part 7 looks at the non-linear seasonal pattern directly.
+
+\newpage
