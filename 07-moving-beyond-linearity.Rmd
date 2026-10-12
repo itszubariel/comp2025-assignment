@@ -1,0 +1,88 @@
+# Part 7: Moving Beyond Linearity
+
+## Aim
+
+The aim is to describe the seasonal pattern in Parramatta's daily maximum temperature as a function of **day of year** (1 January = 1, 31 December = 365 or 366). Part 1 suggested that a straight line would fit badly, and here I check that and fit four non-linear models with hyperparameters that I choose by hand: a polynomial regression, a natural (regression) spline, a smoothing spline and a GAM. Part 8 then chooses the flexibility properly with cross-validation.
+
+## Models with manually chosen flexibility
+
+My manual choices are based on the shape of the seasonal curve in the scatterplot: one smooth hot season and one smooth cool season each year, with no sharp features. I would expect a few degrees of freedom to be enough.
+
+- **Polynomial regression**, degree 4.
+- **Natural cubic spline** (regression spline) with 6 degrees of freedom, so 5 knots placed at quantiles of day of year.
+- **Smoothing spline** with 8 effective degrees of freedom.
+- **GAM** with a single smooth term of day of year, a cubic regression spline with 8 basis functions (7 degrees of freedom) and no penalty.
+
+```{r nl-fit}
+library(splines)   # ns()
+library(mgcv)      # gam()
+
+y <- weather$temperature_2m_max
+x <- weather$doy
+n <- nrow(weather)
+
+# Baseline: a straight line in day of year
+lin <- lm(temperature_2m_max ~ doy, data = weather)
+
+# 1. Polynomial regression, degree 4 (poly() uses orthogonal polynomials)
+poly4 <- lm(temperature_2m_max ~ poly(doy, 4), data = weather)
+
+# 2. Natural cubic spline with 6 degrees of freedom
+ns6 <- lm(temperature_2m_max ~ ns(doy, df = 6), data = weather)
+
+# 3. Smoothing spline with 8 effective degrees of freedom
+ss8 <- smooth.spline(x, y, df = 8)
+
+# 4. GAM with one smooth term for day of year (k = 8 basis functions, fixed df)
+gam8 <- gam(temperature_2m_max ~ s(doy, k = 8, fx = TRUE), data = weather)
+
+# Fitted values from each model
+fits <- list(Linear = fitted(lin), Poly4 = fitted(poly4), NS6 = fitted(ns6),
+             SmoothSpline8 = predict(ss8, x)$y, GAM8 = fitted(gam8))
+
+# Goodness-of-fit statistics
+tss <- sum((y - mean(y))^2)
+gof <- data.frame(
+  Model = names(fits),
+  R2    = sapply(fits, function(f) 1 - sum((y - f)^2) / tss),
+  RMSE  = sapply(fits, function(f) sqrt(mean((y - f)^2))),
+  AIC   = c(AIC(lin), AIC(poly4), AIC(ns6), NA, AIC(gam8)),
+  row.names = NULL)
+knitr::kable(gof, digits = 3, caption = "In-sample fit of the manually chosen models (AIC not defined for smooth.spline)")
+```
+
+```{r nl-plot, fig.height=7, fig.width=7}
+# Data with each fitted curve, one panel per model
+xs <- 1:366
+curves <- list(
+  "Polynomial, degree 4"      = predict(poly4, data.frame(doy = xs)),
+  "Natural spline, df = 6"    = predict(ns6, data.frame(doy = xs)),
+  "Smoothing spline, df = 8"  = predict(ss8, xs)$y,
+  "GAM, k = 8 (fixed)"        = predict(gam8, data.frame(doy = xs)))
+par(mfrow = c(2, 2), mar = c(4, 4, 3, 1))
+for (nm in names(curves)) {
+  plot(x, y, pch = 16, cex = 0.4, col = adjustcolor("grey40", 0.4),
+       xlab = "Day of year", ylab = "Max temperature (°C)", main = nm)
+  lines(xs, curves[[nm]], col = "red", lwd = 3)
+}
+par(mfrow = c(1, 1))
+```
+
+```{r nl-poly-anova}
+# Sequential F-tests: does each extra polynomial degree reduce the residual sum of squares?
+an <- anova(lm(y ~ doy, data = weather),
+            lm(y ~ poly(doy, 2), data = weather),
+            lm(y ~ poly(doy, 3), data = weather),
+            lm(y ~ poly(doy, 4), data = weather),
+            lm(y ~ poly(doy, 5), data = weather),
+            lm(y ~ poly(doy, 6), data = weather))
+an
+
+# Residual lag-1 autocorrelation for the natural spline
+res_ns <- resid(ns6)
+cor(res_ns[-1], res_ns[-length(res_ns)])
+```
+
+**Interpretation.** A straight line is useless here. It has an R-squared of `r round(gof$R2[1], 3)`, because the temperature rises and falls over the year. The four non-linear models are all much better and are almost indistinguishable. Their R-squared values are between `r round(min(gof$R2[-1]), 3)` and `r round(max(gof$R2[-1]), 3)` and their RMSE is about `r round(mean(gof$RMSE[-1]), 1)` °C. The smooth curves peak in summer and bottom out in winter, with no sign of kinks, so the extra flexibility of a small number of degrees of freedom is enough. In the polynomial F-tests the residual sum of squares drops from `r format(round(an$RSS[1]), big.mark = ",", scientific = FALSE)` (degree 1) to `r format(round(an$RSS[2]), big.mark = ",", scientific = FALSE)` (degree 2), changes little at degree 3 (`r format(round(an$RSS[3]), big.mark = ",", scientific = FALSE)`), falls again at degree 4 (`r format(round(an$RSS[4]), big.mark = ",", scientific = FALSE)`) and then gains only a little more. All the extra terms are statistically significant, but with `r n` days even small gains are significant, so I judge by size, and degree 4 captures nearly all the improvement. A modest R-squared of about `r round(mean(gof$R2[-1]), 2)` should not be read as a poor fit. It means that the average seasonal cycle explains about half of the day-to-day variation in Parramatta's maximum temperature, and the other half (RMSE of about `r round(mean(gof$RMSE[-1]), 1)` °C) is weather that sits on top of the seasons, such as heatwaves and cool changes. The residuals of the natural spline have a lag-1 autocorrelation of `r round(cor(res_ns[-1], res_ns[-length(res_ns)]), 2)`, so a hot day tends to be followed by another hot day. This is the same dependence that was found in Part 2.
+
+\newpage
