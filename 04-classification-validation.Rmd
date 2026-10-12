@@ -1,0 +1,55 @@
+# Part 4: Classification Validation
+
+## Aim
+
+The aim is to test the five classifiers on the 2025 data they have never seen, using confusion matrices, accuracy, sensitivity and specificity. Here "positive" means a rain day. **Sensitivity** is the share of real rain days that the classifier correctly calls rain. **Specificity** is the share of real dry days that it correctly calls dry. All classifiers use the usual 0.5 probability cut-off.
+
+## Confusion matrices and performance
+
+```{r class-validate}
+# Predicted classes on the held-out 2025 data
+pred_glm <- factor(ifelse(predict(glm1, test, type = "response") > 0.5, "Rain", "Dry"),
+                   levels = c("Dry", "Rain"))
+pred_lda <- predict(lda1, test)$class
+pred_qda <- predict(qda1, test)$class
+pred_nb  <- predict(nb1, test)
+pred_knn <- knn(train_x, test_x, train$rain, k = k_best)
+
+preds_list <- list(Logistic = pred_glm, LDA = pred_lda, QDA = pred_qda,
+                   NaiveBayes = pred_nb, KNN = pred_knn)
+
+# Confusion matrix for each classifier (rows = predicted, columns = actual)
+cms <- lapply(preds_list, function(p) table(Predicted = p, Actual = test$rain))
+cms
+
+# Accuracy, sensitivity (rain days found) and specificity (dry days found)
+perf <- t(sapply(cms, function(cm) c(
+  Accuracy    = sum(diag(cm)) / sum(cm),
+  Sensitivity = cm["Rain", "Rain"] / sum(cm[, "Rain"]),
+  Specificity = cm["Dry", "Dry"]   / sum(cm[, "Dry"]))))
+knitr::kable(round(perf, 3), caption = "Performance on the 2025 test set (rain day = positive)")
+```
+
+```{r class-best, include=FALSE}
+# Helper objects used in the text below
+best <- rownames(perf)[which.max(perf[, "Accuracy"])]
+```
+
+## Which classifier is best, and why
+
+By accuracy, the best classifier is **`r best`** with `r round(100 * max(perf[, "Accuracy"]), 1)`% correct, compared with the `r round(100 * mean(test$rain == "Dry"), 1)`% baseline of always predicting "Dry". Logistic regression (`r round(100 * perf["Logistic", "Accuracy"], 1)`%) is very close behind. With only `r nrow(test)` test days, a one percentage point difference is about 4 days, so the top two classifiers cannot really be separated and I would call them equally good. All five classifiers beat the baseline. Naive Bayes (`r round(100 * perf["NaiveBayes", "Accuracy"], 1)`%) and QDA (`r round(100 * perf["QDA", "Accuracy"], 1)`%) are a little behind, and KNN (`r round(100 * perf["KNN", "Accuracy"], 1)`%) is the weakest.
+
+A plausible explanation, based on the structure of the data:
+
+1. **The boundary is close to linear.** The two linear methods did best, and the more flexible QDA and KNN did not improve on them. The difference between the classes is mainly a shift in the means (rain days have warmer nights and less radiation), and the extra flexibility of QDA and KNN only adds variance. The covariances are not identical in the two classes (for example the variance of maximum temperature is `r round(var(train$temperature_2m_max[train$rain == "Dry"]), 0)` on dry days against `r round(var(train$temperature_2m_max[train$rain == "Rain"]), 0)` on rain days), but with only `r sum(train$rain == "Rain")` rain days in the training data QDA has to estimate many more parameters than LDA and does not gain from it.
+2. **The predictors are correlated, which hurts naive Bayes.** Maximum temperature, minimum temperature and radiation are strongly correlated with each other (r about 0.7 for TempMax with each of TempMin and Radiation, see Part 1). Naive Bayes assumes they are independent given the class, so it is working from a wrong assumption. Its sensitivity of `r round(perf["NaiveBayes", "Sensitivity"], 2)` is the lowest of all five, so it misses half of the rain days, although it has the highest specificity (`r round(perf["NaiveBayes", "Specificity"], 2)`).
+3. **KNN struggles with overlapping classes and a modest sample.** The two classes overlap a lot, because plenty of cloudy days do not produce more than 1 mm of rain. Distance-based voting is then noisy. Training on `r nrow(train)` days is also small for a method that needs many neighbours around every point.
+4. **Imbalance and cut-off.** All classifiers find dry days (specificity `r round(min(perf[, "Specificity"]), 2)` to `r round(max(perf[, "Specificity"]), 2)`) more easily than rain days (sensitivity `r round(min(perf[, "Sensitivity"]), 2)` to `r round(max(perf[, "Sensitivity"]), 2)`), because there are about twice as many dry days and 0.5 favours the larger class. If catching rain days mattered more than avoiding false alarms, the cut-off should be lowered below 0.5.
+
+## Conclusion for Parramatta
+
+Rain days in Parramatta are recognisable from warm nights, cooler days and low solar radiation, and a simple linear classifier such as LDA or logistic regression identifies about `r round(100 * perf["LDA", "Accuracy"])`% of days correctly using only these four same-day measurements. That is a clear improvement on the baseline but still leaves roughly one rain day in three undetected, so these four variables describe rainy weather rather than fully explain it.
+
+**Limitations and further analysis.** (1) The test set is one year (`r nrow(test)` days), so the accuracy figures are uncertain, and Part 5 uses cross-validation to get a more reliable estimate. (2) All predictors are measured on the same day as the rain, so this is a description of rainy conditions and not a forecast. (3) Useful predictors such as humidity, air pressure and wind direction are not in the dataset. Adding them, or the previous day's rain, should help a lot. (4) The 1 mm threshold is arbitrary, and results may change with a different threshold. (5) A cut-off tuned with ROC curves, and a check of whether a non-linear model such as a GAM does better, would be sensible next steps.
+
+\newpage
