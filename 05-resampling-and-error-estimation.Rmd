@@ -6,7 +6,7 @@ The 2025 test set in Part 4 is only 365 days, so its error is a noisy estimate o
 
 ## Choice of resampling method
 
-I use **10-fold cross-validation**. The days are randomly split into 10 groups. Each group in turn is held out, the model is fitted to the other nine, and the held-out group is predicted. Every day is predicted exactly once, by a model that never saw it. I chose 10 folds because it is a good compromise between bias and variance. Each model is trained on 90% of the data, so its error is close to the error of a model trained on everything (leave-one-out does slightly better here, but is more expensive and its estimates are highly correlated with each other). The simple validation set approach is what Part 4 did, and it is the noisy method I am trying to improve on. Repeating the 10-fold split with different random seeds shows how stable the result is.
+I use **10-fold cross-validation**. The days are randomly split into 10 groups. Each group in turn is held out, the model is fitted to the other nine, and the held-out group is predicted. Every day is predicted exactly once, by a model that never saw it. I chose 10 folds because it is a good compromise between bias and variance. Each model is trained on 90% of the data, so its error is close to the error of a model trained on everything (leave-one-out is slightly less biased, but is more expensive and its estimates are highly correlated with each other). The simple validation set approach is what Part 4 did, and it is the noisy method I am trying to improve on. Repeating the 10-fold split with different random seeds shows how stable the result is.
 
 Weather on neighbouring days is similar (the residuals in Part 2 had a lag-1 autocorrelation of 0.27), so random folds put near-copies of each test day in the training set, which makes the error look a little too good. As a stricter check I also use **leave-one-year-out cross-validation**: each of the five years is predicted by a model fitted to the other four years.
 
@@ -60,8 +60,11 @@ results <- data.frame(
   Estimate = c("Training error", "10-fold CV", "Leave-one-year-out CV"),
   Regression_RMSE_C = c(train_rmse, cv10_rmse, loyo_rmse),
   Logistic_error_rate = c(train_err, cv10_err, loyo_err))
-knitr::kable(results, digits = 3, caption = "Training and cross-validated error for the final models")
-c(regression_rmse_sd_over_20_repeats = sd(rep_rmse), logistic_error_sd_over_20_repeats = sd(rep_err))
+knitr::kable(
+  results, digits = 3,
+  caption = "Training and cross-validated error for the final models")
+c(regression_rmse_sd_over_20_repeats = sd(rep_rmse),
+  logistic_error_sd_over_20_repeats = sd(rep_err))
 
 # Leave-one-year-out RMSE for each year separately
 p_year <- cv_reg(folds_year)
@@ -80,5 +83,11 @@ names(yr_rmse) <- sort(unique(weather$year))
 ```
 
 **Interpretation.** For the regression model, the 10-fold CV estimate of test error is an RMSE of `r round(cv10_rmse, 2)` °C, which is almost identical to the training RMSE of `r round(train_rmse, 2)` °C. For the rain-day logistic regression, the 10-fold CV misclassification rate is `r round(100 * cv10_err, 1)`% against a training error of `r round(100 * train_err, 1)`%, which is again nearly the same (so the CV accuracy is about `r round(100 * (1 - cv10_err), 1)`%). Repeating the 10-fold split 20 times changes the regression RMSE by only about `r round(sd(rep_rmse), 3)` °C and the error rate by about `r round(100 * sd(rep_err), 2)` percentage points, so the choice of random split does not matter. The stricter leave-one-year-out estimates are a little worse (`r round(loyo_rmse, 2)` °C and `r round(100 * loyo_err, 1)`%). That is the expected direction, because random folds are a bit optimistic when neighbouring days are alike. It also varies by year. The regression RMSE ranges from `r round(min(yr_rmse), 2)` °C (`r names(yr_rmse)[which.min(yr_rmse)]`) to `r round(max(yr_rmse), 2)` °C (`r names(yr_rmse)[which.max(yr_rmse)]`). The held-out year 2025 in Parts 3 and 4 gave a logistic error of 20.8%, higher than the CV estimate of `r round(100 * cv10_err, 1)`%, probably because 2025 happened to be a harder year to predict (its regression error was also the highest of the five years). This shows why one test set can mislead, and why the cross-validated figures are the ones I would quote.
+
+## Conclusion for Parramatta
+
+Cross-validation gives a more trustworthy picture of how well these models would work on new days in Parramatta than the single 2025 split of Parts 3 and 4. The regression that predicts the daily maximum temperature from same-day conditions has a typical error of about `r round(cv10_rmse, 2)` °C, and the rain-day logistic regression misclassifies about `r round(100 * cv10_err, 1)`% of days. Both figures are close to the training errors, so there is little sign of overfitting, but the stricter leave-one-year-out check is a little worse (`r round(loyo_rmse, 2)` °C), which shows that the particular year held out matters for a place with Parramatta's year-to-year variability.
+
+**Limitations and further analysis.** (1) Random folds ignore the time order of the data, so the 10-fold figures are mildly optimistic where consecutive days are alike, and leave-one-year-out corrects for this but rests on only five years. (2) Both models still use same-day measurements, so the errors describe Parramatta's weather rather than a forecast. (3) A blocked or time-series cross-validation scheme, and a longer record, would give firmer error estimates.
 
 \newpage
