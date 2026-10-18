@@ -76,7 +76,8 @@ par(mfrow = c(1, 1))
 poly_f <- lm(temperature_2m_max ~ poly(doy, chosen["Polynomial"]), data = weather)
 ns_f   <- lm(temperature_2m_max ~ ns(doy, df = chosen["NaturalSpline"]), data = weather)
 ss_f   <- smooth.spline(x, y, df = chosen["SmoothingSpline"])
-gam_f  <- gam(temperature_2m_max ~ s(doy, k = chosen["GAM_fixed"], fx = TRUE), data = weather)
+gam_f  <- gam(temperature_2m_max ~ s(doy, k = chosen["GAM_fixed"], fx = TRUE),
+              data = weather)
 cc_f   <- gam(temperature_2m_max ~ s(doy, k = chosen["GAM_cyclic"], bs = "cc"),
               data = weather, knots = list(doy = c(0.5, 366.5)))
 
@@ -91,7 +92,9 @@ summary_tab <- data.frame(
   LOYO_RMSE  = sapply(names(chosen), pick, col = "loyo"),
   Train_R2   = sapply(final_fits, function(f) 1 - sum((y - f)^2) / tss),
   row.names = NULL)
-knitr::kable(summary_tab, digits = 3, caption = "Chosen flexibility and cross-validated error for each model")
+knitr::kable(
+  summary_tab, digits = 3,
+  caption = "Chosen flexibility and cross-validated error for each model")
 ```
 
 ## Comparing the fitted curves
@@ -108,7 +111,8 @@ cols <- c("red", "blue", "darkgreen", "orange", "purple")
 plot(x, y, pch = 16, cex = 0.4, col = adjustcolor("grey40", 0.35), ylim = c(5, 43),
      xlab = "Day of year", ylab = "Daily maximum temperature (°C)",
      main = "Seasonal pattern of daily maximum temperature, Parramatta")
-for (i in seq_along(final_curves)) lines(xs, final_curves[[i]], col = cols[i], lwd = 2.5, lty = i)
+for (i in seq_along(final_curves))
+  lines(xs, final_curves[[i]], col = cols[i], lwd = 2.5, lty = i)
 legend("bottom", legend = paste0(names(chosen), " (", chosen, ")"),
        col = cols, lty = 1:5, lwd = 2.5, cex = 0.8, ncol = 2, bg = "white")
 
@@ -118,7 +122,8 @@ rownames(edges) <- c("1 Jan", "31 Dec")
 round(t(edges), 2)
 
 # Where the cyclic curve peaks and bottoms out
-c(hottest_day = which.max(final_curves$GAM_cyclic), coolest_day = which.min(final_curves$GAM_cyclic))
+c(hottest_day = which.max(final_curves$GAM_cyclic),
+  coolest_day = which.min(final_curves$GAM_cyclic))
 ```
 
 ```{r nl-text-numbers, include=FALSE}
