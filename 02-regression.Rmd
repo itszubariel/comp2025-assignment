@@ -35,7 +35,8 @@ sapply(names(xs), function(v) {
 ## Diagnostic plots
 
 ```{r reg-diag, fig.height=7, fig.width=7}
-# Residuals vs fitted, normal Q-Q, scale-location and residuals vs leverage plots for Model 1
+# Residuals vs fitted, normal Q-Q, scale-location and residuals vs
+# leverage plots for Model 1
 par(mfrow = c(2, 2))
 plot(m1)
 par(mfrow = c(1, 1))
