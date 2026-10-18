@@ -27,7 +27,8 @@ perf <- t(sapply(cms, function(cm) c(
   Accuracy    = sum(diag(cm)) / sum(cm),
   Sensitivity = cm["Rain", "Rain"] / sum(cm[, "Rain"]),
   Specificity = cm["Dry", "Dry"]   / sum(cm[, "Dry"]))))
-knitr::kable(round(perf, 3), caption = "Performance on the 2025 test set (rain day = positive)")
+knitr::kable(round(perf, 3),
+             caption = "Performance on the 2025 test set (rain day = positive)")
 ```
 
 ```{r class-best, include=FALSE}
