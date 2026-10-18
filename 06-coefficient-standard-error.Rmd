@@ -32,16 +32,22 @@ boot_block <- replicate(B, {
 # Compare the three standard errors and 95% percentile intervals
 se_lm <- summary(m2)$coefficients[coef_name, "Std. Error"]
 comparison <- data.frame(
-  Method = c("lm() formula", "Bootstrap (resample days)", "Block bootstrap (30-day blocks)"),
+  Method = c("lm() formula", "Bootstrap (resample days)",
+             "Block bootstrap (30-day blocks)"),
   Estimate = coef(m2)[coef_name],
   Std_Error = c(se_lm, sd(boot_iid), sd(boot_block)),
-  CI_lower = c(confint(m2)[coef_name, 1], quantile(boot_iid, 0.025), quantile(boot_block, 0.025)),
-  CI_upper = c(confint(m2)[coef_name, 2], quantile(boot_iid, 0.975), quantile(boot_block, 0.975)),
+  CI_lower = c(confint(m2)[coef_name, 1], quantile(boot_iid, 0.025),
+               quantile(boot_block, 0.025)),
+  CI_upper = c(confint(m2)[coef_name, 2], quantile(boot_iid, 0.975),
+               quantile(boot_block, 0.975)),
   row.names = NULL)
-knitr::kable(comparison, digits = 4, caption = "Standard error of the wind speed coefficient")
+knitr::kable(
+  comparison, digits = 4,
+  caption = "Standard error of the wind speed coefficient")
 
 # Histogram of the bootstrap coefficients
-hist(boot_iid, breaks = 40, main = "Bootstrap distribution of the wind speed coefficient",
+hist(boot_iid, breaks = 40,
+     main = "Bootstrap distribution of the wind speed coefficient",
      xlab = "Coefficient (degrees C per km/h)")
 abline(v = coef(m2)[coef_name], col = "red", lwd = 2)
 ```
@@ -54,7 +60,7 @@ The Part 5 results show almost no gap between training and cross-validated error
 
 ## Conclusion for Parramatta
 
-Our models for Parramatta's weather are about as good on new days as they are on the days they were fitted to. A typical error in predicting the daily maximum temperature is about 2.5 °C, and about 18% of days are misclassified as rain or dry, with somewhat larger errors for a whole unseen year. The standard errors from `lm()` are reasonable, but the bootstrap, and especially the block bootstrap, shows they are a little optimistic because weather on consecutive days is related.
+The models for Parramatta's weather are about as good on new days as they are on the days they were fitted to. A typical error in predicting the daily maximum temperature is about 2.5 °C, and about 18% of days are misclassified as rain or dry, with somewhat larger errors for a whole unseen year. The standard errors from `lm()` are reasonable, but the bootstrap, and especially the block bootstrap, shows they are a little optimistic because weather on consecutive days is related.
 
 **Limitations and further analysis.** (1) Random folds ignore the time order of the data, and leave-one-year-out is based on only five years, so the estimates are not precise. (2) The block length of 30 days was chosen by judgement, and other lengths would give somewhat different standard errors. (3) Only the wind coefficient was bootstrapped, and the other coefficients could behave differently. (4) A time-series model with the previous day's weather as predictors, and a longer record of Parramatta weather, would give firmer conclusions.
 
