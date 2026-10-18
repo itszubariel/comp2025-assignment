@@ -1,8 +1,42 @@
 # Part 1: Gathering and Exploring the Data
 
+## Aim
+
+The aim of this part is to download at least three full years of daily weather data for Parramatta from the Open-Meteo Historical Weather API, to describe each variable and its units, and to explore the data graphically so that the later parts have a sound basis for choosing predictors and models.
+
 ## Location
 
-I chose Parramatta, in Greater Western Sydney (latitude -33.8150, longitude 151.0011), because it is in the part of Sydney where I live and study, so it is the weather I actually experience. It is also a good location for this project. Parramatta is inland, so it is noticeably hotter in summer than coastal Sydney, it has four clear seasons, and it has a good mix of dry and rainy days. The data covers five full years, 1 January 2021 to 31 December 2025 (`r nrow(weather)` daily observations), downloaded once from the Open-Meteo Historical Weather API using the `httr` and `jsonlite` packages and saved to a CSV file. There were no missing values, so no cleaning was needed.
+I chose Parramatta, in Greater Western Sydney (latitude -33.8150, longitude 151.0011), because it is in the part of Sydney where I live and study, so it is the weather I actually experience. It is also a good location for this project. Parramatta is inland, so summers there are typically hotter than on the coast, it has four clear seasons, and it has a good mix of dry and rainy days. The data covers five full years, 1 January 2021 to 31 December 2025 (`r nrow(weather)` daily observations), downloaded once from the Open-Meteo Historical Weather API using the `httr` and `jsonlite` packages and saved to a CSV file. There were no missing values, so no cleaning was needed.
+
+## Downloading the data
+
+The data was downloaded once from the Open-Meteo Historical Weather API with the code below (shown but not re-run when the report is built) and saved to `parramatta_weather.csv`.
+
+```{r download, eval=FALSE}
+library(httr)
+library(jsonlite)
+
+# Parramatta coordinates
+lat <- -33.8150
+lon <- 151.0011
+
+# Daily variables to download
+daily_vars <- c("temperature_2m_max", "temperature_2m_min", "precipitation_sum",
+                "wind_speed_10m_max", "shortwave_radiation_sum", "sunshine_duration")
+
+# Request five full years of daily data
+resp <- GET(
+  "https://archive-api.open-meteo.com/v1/archive",
+  query = list(latitude = lat, longitude = lon,
+               start_date = "2021-01-01", end_date = "2025-12-31",
+               daily = paste(daily_vars, collapse = ","),
+               timezone = "Australia/Sydney"))
+stop_for_status(resp)
+
+raw <- fromJSON(content(resp, as = "text", encoding = "UTF-8"))
+weather <- as.data.frame(raw$daily)
+write.csv(weather, "parramatta_weather.csv", row.names = FALSE)
+```
 
 ## Variables
 
@@ -43,6 +77,8 @@ ggpairs(num_vars, lower = list(continuous = wrap("points", alpha = 0.2, size = 0
 **Skew and unusual observations.** Precip is extremely right-skewed. `r round(pct_dry)`% of days recorded exactly 0 mm, the median is `r median(weather$precipitation_sum)` mm, the mean is `r round(mean(weather$precipitation_sum), 2)` mm, and the maximum is `r max(weather$precipitation_sum)` mm in a single day. WindMax is mildly right-skewed. SunHours has a hard ceiling at 14 hours, which is the physical limit of daylight, a pile-up of days near 0 hours (heavily overcast days) and an unexplained horizontal band of days at exactly 10 hours. I do not know the cause of the 10-hour band, but it may be an artefact of how the sunshine duration is derived rather than real weather. The hottest days (up to `r max(weather$temperature_2m_max)` °C) and the very wet days are genuine extreme events and I keep them in the data.
 
 **Implications for modelling.** (1) For Part 2, TempMin, Radiation and season are promising predictors of TempMax, but I will use only one of Radiation and SunHours to avoid multicollinearity. (2) Precip is too skewed to be a sensible response in linear regression, so in Part 3 I convert it to a binary rain-day indicator. (3) Because the sunshine and rain variables are linked, the rain-day classifiers should not use predictors used to define the indicator. (4) Seasonality means non-linear terms in day of year are needed (Part 7).
+
+**Conclusion for Parramatta.** Parramatta's weather over 2021 to 2025 shows clear structure that the later parts can exploit. Maximum and minimum temperature and solar radiation rise and fall together with the seasons, so a seasonal or non-linear term will be needed; precipitation is far too skewed to model directly, which is why it becomes a binary rain-day response; and radiation and sunshine hours carry almost the same information, so only one of them should be used. These observations set up the predictor choices in Parts 2, 3 and 7.
 
 **Limitations.** Only five years of data are used, so rare extremes (such as a severe heatwave) are under-represented. The values are from a gridded reanalysis-based model rather than a single weather station, so they may differ from official Parramatta station readings. Consecutive days are also not independent (weather is autocorrelated), which means the usual statistical assumptions are only approximately true. A further step would be to compare this with an official Bureau of Meteorology station record.
 \newpage
