@@ -48,7 +48,8 @@ gof <- data.frame(
   RMSE  = sapply(fits, function(f) sqrt(mean((y - f)^2))),
   AIC   = c(AIC(lin), AIC(poly4), AIC(ns6), NA, AIC(gam8)),
   row.names = NULL)
-knitr::kable(gof, digits = 3, caption = "In-sample fit of the manually chosen models (AIC not defined for smooth.spline)")
+cap <- "In-sample fit of the manually chosen models (AIC not defined for smooth.spline)"
+knitr::kable(gof, digits = 3, caption = cap)
 ```
 
 ```{r nl-plot, fig.height=7, fig.width=7}
@@ -69,7 +70,8 @@ par(mfrow = c(1, 1))
 ```
 
 ```{r nl-poly-anova}
-# Sequential F-tests: does each extra polynomial degree reduce the residual sum of squares?
+# Sequential F-tests: does each extra polynomial degree reduce the
+# residual sum of squares?
 an <- anova(lm(y ~ doy, data = weather),
             lm(y ~ poly(doy, 2), data = weather),
             lm(y ~ poly(doy, 3), data = weather),
@@ -84,5 +86,11 @@ cor(res_ns[-1], res_ns[-length(res_ns)])
 ```
 
 **Interpretation.** A straight line is useless here. It has an R-squared of `r round(gof$R2[1], 3)`, because the temperature rises and falls over the year. The four non-linear models are all much better and are almost indistinguishable. Their R-squared values are between `r round(min(gof$R2[-1]), 3)` and `r round(max(gof$R2[-1]), 3)` and their RMSE is about `r round(mean(gof$RMSE[-1]), 1)` °C. The smooth curves peak in summer and bottom out in winter, with no sign of kinks, so the extra flexibility of a small number of degrees of freedom is enough. In the polynomial F-tests the residual sum of squares drops from `r format(round(an$RSS[1]), big.mark = ",", scientific = FALSE)` (degree 1) to `r format(round(an$RSS[2]), big.mark = ",", scientific = FALSE)` (degree 2), changes little at degree 3 (`r format(round(an$RSS[3]), big.mark = ",", scientific = FALSE)`), falls again at degree 4 (`r format(round(an$RSS[4]), big.mark = ",", scientific = FALSE)`) and then gains only a little more. All the extra terms are statistically significant, but with `r n` days even small gains are significant, so I judge by size, and degree 4 captures nearly all the improvement. A modest R-squared of about `r round(mean(gof$R2[-1]), 2)` should not be read as a poor fit. It means that the average seasonal cycle explains about half of the day-to-day variation in Parramatta's maximum temperature, and the other half (RMSE of about `r round(mean(gof$RMSE[-1]), 1)` °C) is weather that sits on top of the seasons, such as heatwaves and cool changes. The residuals of the natural spline have a lag-1 autocorrelation of `r round(cor(res_ns[-1], res_ns[-length(res_ns)]), 2)`, so a hot day tends to be followed by another hot day. This is the same dependence that was found in Part 2.
+
+## Conclusion for Parramatta
+
+The seasonal pattern in Parramatta's maximum temperature is clearly non-linear. A straight line in day of year explains almost none of the variation (R-squared `r round(gof$R2[1], 3)`), while a smooth seasonal curve explains about `r round(mean(gof$R2[-1]), 2)` of it. All four methods peak in summer and bottom out in winter and are almost indistinguishable from each other, which tells me that Parramatta's seasonality is a broad, smooth curve rather than anything with sharp features. The variation that remains (an RMSE of about `r round(mean(gof$RMSE[-1]), 1)` °C) is the day-to-day weather that sits on top of the seasons, such as heatwaves and cool changes.
+
+**Limitations and further analysis.** (1) The flexibility of each model is chosen by hand from the shape of the curve, so these settings are subjective; Part 8 selects them properly with cross-validation. (2) The residuals are autocorrelated (`r round(cor(res_ns[-1], res_ns[-length(res_ns)]), 2)`), so a hot day tends to follow a hot day and the usual independent-error assumptions are only approximate. (3) A smooth curve in day of year gives the typical temperature for a date, not a prediction for a particular day; adding the same-day predictors from Part 2 in a single GAM would be a natural extension.
 
 \newpage
